@@ -1,0 +1,77 @@
+// Flood Detection using Sentinel-1 SAR Imagery - Kathmandu Metropolitan City
+// 1. Define Kathmandu Metropolitan City Area
+
+var kathmanduMetropolis = ee.Geometry.Polygon([
+  [
+    [85.2833, 27.7167],
+    [85.3667, 27.7167],
+    [85.3667, 27.6500],
+    [85.2833, 27.6500],
+    [85.2833, 27.7167]
+  ]
+]);
+var geometry = kathmanduMetropolis;
+
+// 2. Dates for September 2024 flood event
+var beforeStart = '2023-08-01';
+var beforeEnd = '2023-09-25';
+var afterStart = '2024-09-28';
+var afterEnd = '2024-10-15';
+
+// 3. AOI Visualization
+Map.addLayer(geometry, {color: 'green'}, 'Kathmandu Metropolitan City AOI');
+
+// 4. Filter Sentinel-1 SAR Data
+var collection = ee.ImageCollection('COPERNICUS/S1_GRD')
+  .filter(ee.Filter.eq('instrumentMode', 'IW'))
+  .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
+  .filter(ee.Filter.eq('orbitProperties_pass', 'DESCENDING'))
+  .filter(ee.Filter.bounds(geometry))
+  .select('VH');
+
+// 5. Split into Before and After collections
+var beforeCollection = collection.filter(ee.Filter.date(beforeStart, beforeEnd));
+var afterCollection = collection.filter(ee.Filter.date(afterStart, afterEnd));
+
+// 6. Create mosaics and clip to AOI
+var before = beforeCollection.mosaic().clip(geometry);
+var after = afterCollection.mosaic().clip(geometry);
+
+// 7. Before Flood Layer & After Flood Layer
+Map.centerObject(geometry, 13);
+Map.addLayer(before, {min:-25, max:0}, 'Before Floods');
+Map.addLayer(after, {min:-25, max:0}, 'After Floods'); 
+
+// 8. Calculating Differences
+var difference = after.divide(before);
+
+// 9. Difference Layer
+Map.addLayer(difference, {min:0.5, max:2, palette: ['red', 'white', 'blue']}, 'Difference Ratio');
+
+// 10. Flood Detection & Visualize Layers
+// Define a Threshold
+var diffThreshold = 1.25;
+
+// 11. Identification of flooded pixels
+var flooded = difference.gt(diffThreshold).rename('water').selfMask();
+Map.addLayer(flooded, {min:0, max:1, palette: ['blue']}, 'Flood Area', false);
+
+// 12. Non-flooded areas for comparison
+var nonFlooded = difference.lt(diffThreshold).rename('land').selfMask();
+Map.addLayer(nonFlooded, {min:0, max:1, palette: ['green']}, 'Non-Flooded Area', false);
+
+// 13. Calculate Affected Area in Square Kilometers (km2)
+print('Total City Area (km2)', geometry.area().divide(1000000));
+
+var stats = flooded.multiply(ee.Image.pixelArea()).reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: geometry,
+  scale: 10,
+  maxPixels: 1e9,
+  tileScale: 16
+});
+print('Flooded Area (km2)', ee.Number(stats.get('water')).divide(1000000));
+
+// Additional flood percentage
+var floodPercentage = ee.Number(stats.get('water')).divide(geometry.area()).multiply(100);
+print('Flood Percentage (%)', floodPercentage);
